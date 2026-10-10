@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escáner de Pases - Puerta</title>
+    <!-- Tailwind CSS para diseño rápido -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Librería para leer códigos QR con la cámara -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- SDK de Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-md bg-slate-800 rounded-2xl shadow-xl p-6 border border-slate-700">
+        <h1 class="text-2xl font-bold text-center mb-4 text-emerald-400">Control de Acceso 🚪</h1>
+        
+        <!-- Contenedor de la cámara -->
+        <div id="reader" class="overflow-hidden rounded-xl border border-slate-600 mb-4"></div>
+
+        <!-- Resultado del escaneo -->
+        <div id="result-container" class="hidden p-4 rounded-xl text-center transition-all">
+            <p id="result-title" class="text-xl font-bold"></p>
+            <p id="result-name" class="text-lg mt-1"></p>
+            <p id="result-time" class="text-sm text-slate-300 mt-1"></p>
+        </div>
+
+        <button onclick="reiniciarEscaneo()" class="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-xl transition-all">
+            Escanear Siguiente Pase
+        </button>
+    </div>
+
+    <script>
+        // CONFIGURA TUS CREDENCIALES DE SUPABASE AQUÍ
+        const SUPABASE_URL = 'https://mbgkxotrijtbkypuwtdc.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1iZ2t4b3RyaWp0Ymt5cHV3dGRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2Njc1OTYsImV4cCI6MjEwNzI0MzU5Nn0.o0gnJqCNmj8wHSSWGWkHIAXUIryEy0Enxx6QNztAGQc';
+        
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let html5QrCode;
+        let escaneando = true;
+
+        function onScanSuccess(decodedText, decodedResult) {
+            if (!escaneando) return;
+            escaneando = false;
+            
+            // Detener temporalmente la cámara al detectar un código
+            html5QrCode.pause();
+
+            validarYRegistrarAsistencia(decodedText);
+        }
+
+        async function validarYRegistrarAsistencia(codigo) {
+            const container = document.getElementById('result-container');
+            const title = document.getElementById('result-title');
+            const name = document.getElementById('result-name');
+            const time = document.getElementById('result-time');
+            
+            container.classList.remove('hidden', 'bg-emerald-900', 'bg-red-900', 'bg-yellow-900');
+
+            // 1. Buscar el código en Supabase
+            const { data: invitado, error } = await supabaseClient
+                .from('invitados')
+                .select('*')
+                .eq('codigo_qr', codigo)
+                .single();
+
+            if (error || !invitado) {
+                container.classList.add('bg-red-900', 'border', 'border-red-600');
+                title.innerText = "❌ CÓDIGO INVÁLIDO";
+                name.innerText = "Este pase no existe en el sistema.";
+                time.innerText = "";
+                return;
+            }
+
+            // 2. Verificar si ya había ingresado antes (Evita duplicados)
+            if (invitado.asistio) {
+                container.classList.add('bg-yellow-900', 'border', 'border-yellow-600');
+                title.innerText = "⚠️ ACCESO DUPLICADO";
+                name.innerText = invitado.nombre;
+                const fechaLegible = new Date(invitado.fecha_asistencia).toLocaleTimeString();
+                time.innerText = `Ya ingresó previamente a las: ${fechaLegible}`;
+                return;
+            }
+
+            // 3. Registrar la asistencia por primera vez
+            const ahora = new Date().toISOString();
+            const { error: updateError } = await supabaseClient
+                .from('invitados')
+                .update({ asistio: true, fecha_asistencia: ahora })
+                .eq('codigo_qr', codigo);
+
+            if (updateError) {
+                container.classList.add('bg-red-900', 'border', 'border-red-600');
+                title.innerText = "Error de Servidor";
+                name.innerText = "No se pudo actualizar el estado.";
+                time.innerText = "";
+                return;
+            }
+
+            // ÉXITO: Acceso concedido
+            container.classList.add('bg-emerald-900', 'border', 'border-emerald-600');
+            title.innerText = "✅ ACCESO CONCEDIDO";
+            name.innerText = invitado.nombre;
+            time.innerText = `Registrado a las: ${new Date().toLocaleTimeString()}`;
+        }
+
+        function reiniciarEscaneo() {
+            const container = document.getElementById('result-container');
+            container.classList.add('hidden');
+            escaneando = true;
+            html5QrCode.resume();
+        }
+
+        // Iniciar la cámara trasera del celular automáticamente
+        document.addEventListener("DOMContentLoaded", () => {
+            html5QrCode = new Html5Qrcode("reader");
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess)
+                .catch(err => {
+                    alert("Error al acceder a la cámara. Asegúrate de dar permisos HTTPS.");
+                    console.error(err);
+                });
+        });
+    </script>
+</body>
+</html>
